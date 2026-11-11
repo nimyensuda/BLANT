@@ -28,6 +28,7 @@ OPTIONS (added BEFORE the blant.exe name)
        it as a p-value and set the smallest cluster to whatever size gives the number of edges a p-value less than this;
        default behaviour is to demand a cluster whose number of edges has p-value < 1/(n choose 2)^2 (heuristic).
     -M largest: stop building a community if it reaches this size (default: no limit)
+    -X N: CORE refinement: up to N region-exploration rounds per community (default 20; 0 = off)
     -sSAMPLE_METHOD: BLANT's sampling method (reasonable choices are MCMC, NBE, EBE, or RES)
     -o OVERLAP: (default 0.5); the maximum allowed fractional overlap between a new cluster and any one previously discovered
 	cluster (though it can overlap by more than this with MULTIPLE previous clusters). If it overlaps more than this with
@@ -84,6 +85,10 @@ DENSITY_LEEWAY=0.95 # factor by which we can _initially_ keep a node in the clus
 SUBFINAL_SORT="-k 2nr -k 5n"
 BLANT_FILES=''
 
+# CORE algorithm parameters
+CORE_ITERS=20  # number of region exploration rounds per community (0 disables)
+CORE_STALL=5   # number of consecutive non-improving rounds before stop refining 
+
 while echo "X$1" | grep '^X-' >/dev/null; do # first argument is an option
     case "$1" in
     -1) ONLY_ONE=1; shift;;
@@ -111,6 +116,8 @@ while echo "X$1" | grep '^X-' >/dev/null; do # first argument is an option
     -o) OVERLAP="$2"; shift 2;;
     -o[0-9]*) OVERLAP="`echo $1|sed 's/^-o//'`"; shift 1;;
     -P[0-9]*) EDGE_PREDICT="`echo $1|sed 's/^-P//'`"; shift 1;;
+    -X) CORE_ITERS="$2"; shift 2;;
+    -X[0-9]*) CORE_ITERS="`echo $1|sed 's/^-X//'`"; shift 1;;
     -*) die "unknown option '$1'";;
     esac
 done
@@ -169,7 +176,7 @@ something like ED+N(ED,ED/2), so that the expected density is still ED, but we'r
 and below the threshold, at random" >&2
 
 # Pre-run the BLANTs for each k, and re-use the files for each edge density.
-BLANT_EXIT_CODE=0
+BLANT_EXIT_CODE=0;
 if [ "$BLANT_FILES" = "$TMPDIR" ]; then
     for k in "${Ks[@]}"; do
 	#minEdges=`hawk 'BEGIN{edC='$EDGE_DENSITY_THRESHOLD'*choose('$k',2);rounded_edC=int(edC); if(rounded_edC < edC){rounded_edC++;} print rounded_edC}'`
@@ -196,7 +203,7 @@ for edgeDensity in "${EDs[@]}"; do
 	UNION_SIZES=$TMPDIR/unionSize$k.$edgeDensity.txt # per-u number of distinct neighbors printed by the first awk
 	hawk ' # This first awk just sorts the BLANT output; it uses minimal RAM and CPU
 	    BEGIN{ edC='$edgeDensity'*choose('$k',2); onlyBestOrbit='$ONLY_BEST_ORBIT';
-		cMode="'$COMMUNITY_MODE'"; if(cMode=="") cMode=="g"; # graphlet uses FAR less RAM
+		cMode="'$COMMUNITY_MODE'"; if(cMode=="") cMode="g"; # graphlet uses FAR less RAM
 		ASSERT(cMode=="g" || cMode=="o", "COMMUNITY_MODE must be o or g, not "cMode);
 		rounded_edC=int(edC); if(rounded_edC == edC) --rounded_edC; # allow one edge less than eps
 		minEdges=MAX(rounded_edC, ('$k')-1)
@@ -220,8 +227,8 @@ for edgeDensity in "${EDs[@]}"; do
 	    END {
 		for(u in Kc) {
 		    delete un; nUn=0;
-		    for(item in Kc[u]) if(item) { # do not use item==0
-			ORS=" " # Output Record Separator = space, so all the following goes on one line
+			for(item in Kc[u]) if(item) { # do not use item==0
+		    ORS=" " # Output Record Separator = space, so all the following goes on one line
 			if('$SQR_NORM') print Kc[u][item]^2/T[u], u, item
 			else            print Kc[u][item], u, item # print the cluster membership count, and the node
 			for(v in graphletNeighbors[u][item]) { print v; if(!(v in un)) { un[v]=1; ++nUn; } }
@@ -235,7 +242,7 @@ for edgeDensity in "${EDs[@]}"; do
 	sort -T $TMPDIR -gr | # > $BLANT_FILES/clus$k.sorted  # sorted [weighted] cluster-counts of all the nodes, largest-to-smallest
 	hawk ' # build the actual communities; may require huge amounts of RAM and CPU, eg 10GB and 12-24h for 9wiki-topcats
 	    BEGIN{if("'$RANDOM_SEED'") srand('$RANDOM_SEED');else Srand();OFS="\t"; ID=0; edgePredict='"$EDGE_PREDICT"';
-		ED='$edgeDensity'; maxClus='$maxClus'; halfEdgeMean='$minEdgeMean'/2;
+		ED='$edgeDensity'; maxClus='$maxClus'; coreIters='$CORE_ITERS'; coreStall='$CORE_STALL'; halfEdgeMean='$minEdgeMean'/2;
 		thr=sqrt(ED)*0.9; # count ratio for neighbors to be appended: 0.7 seems about optimal, but 0.5 to 0.9 also work well
 		M=1*'$minClusArg'; if(M>=1) minClus=M;
 		else {
@@ -299,6 +306,54 @@ for edgeDensity in "${EDs[@]}"; do
 		}
 		PROCINFO["sorted_in"]="";
 	    }
+	    # CORE region exploration for cluster refinement
+	    function coreValid() { return Slen<2 || edgeCount/(Slen*(Slen-1)/2) >= ED }
+	    function coreWorst(    v,d,bd,b) { bd=1e18; for(v in S) { d=edgesIntoS[v]+0; if(d<bd) { bd=d; b=v } } return b }
+	    function coreAdd(u) {
+		edgeCount += edgesIntoS[u]+0; wgtEdgeCount += (weighted ? wgtIntoS[u]+0 : edgesIntoS[u]+0);
+		S[u]=1; ++Slen; Sorder[Slen]=u; IntoS(u,1);
+		if(logging) { logN[++nLog]=u; logT[nLog]=1 }
+	    }
+	    function coreDrop(v) { RemoveFromS(v); --Slen; if(logging) { logN[++nLog]=v; logT[nLog]=-1 } }
+	    function coreUndo(    i) { logging=0; for(i=nLog;i>=1;i--) if(logT[i]>0) coreDrop(logN[i]); else coreAdd(logN[i]); nLog=0 }
+	    # CORE add_node: repeatedly add the outside node with most edges into S while density stays >= ED
+	    function coreGrow(    w,d,bd,b) {
+		while(Slen < maxClus) {
+		    bd=0; b="";
+		    for(w in edgesIntoS) if(!(w in S)) { d=edgesIntoS[w]; if(d>bd && (edgeCount+d)/((Slen+1)*Slen/2) >= ED) { bd=d; b=w } }
+		    if(b=="") break;
+		    coreAdd(b);
+		}
+	    }
+	    # CORE region_exploration: add a connected region, drop as many worst nodes, regrow; keep only if better
+	    function CoreRefine(    it,no,before,eBefore,R,i,m,u,x,cur,nxt,v,cnt) {
+		logging=0; coreGrow(); no=0;
+		for(it=1; it<=coreIters && no<coreStall; it++) {
+		    nLog=0; logging=1; before=Slen; eBefore=edgeCount;
+		    i=0; delete mem; for(v in S) mem[++i]=v;
+		    u=mem[1+int(rand()*i)]; x="";
+		    PROCINFO["sorted_in"]="randsort";
+		    if(u in graphletNeighbors) for(v in graphletNeighbors[u]) if(!(v in S)) { x=v; break }
+		    if(x!="") {
+			R=2+int(rand()*MIN(8,int(Slen/4)+1)); delete reg; cnt=0; cur=x;
+			while(cnt<R) {
+			    reg[cur]=1; ++cnt; nxt="";
+			    if(cur in graphletNeighbors) for(v in graphletNeighbors[cur]) if(!(v in S) && !(v in reg)) { nxt=v; break }
+			    if(nxt=="") break;
+			    cur=nxt;
+			}
+		    }
+		    PROCINFO["sorted_in"]="";
+		    if(x=="") { logging=0; ++no; continue }
+		    m=0; for(v in reg) if(Slen<maxClus) { coreAdd(v); ++m }
+		    for(i=1;i<=m;i++) coreDrop(coreWorst());
+		    coreGrow();
+		    while(Slen>1 && !coreValid()) coreDrop(coreWorst());
+		    if(Slen>before || (Slen==before && edgeCount>eBefore)) no=0; else { coreUndo(); ++no }
+		    logging=0;
+		}
+		logging=0;
+	    }
 	    # d=+1 when u joins S, -1 when it leaves
 	    function IntoS(u,d,    w) {
 		if(!(u in edge)) return;
@@ -352,7 +407,7 @@ for edgeDensity in "${EDs[@]}"; do
 				if((edgeCount+edgePredict)/maxEdges >= ED) {
 				    # just ONE edge would put us over the threshold; predict it should exist
 				    numPredict=0;
-				    for(uu in S)if((!(uu in edge)) || !(u in edge[uu]))
+					for(uu in S)if((!(uu in edge)) || !(u in edge[uu]))
 					#printf "predictEdge-%d\t%s\t%s\n",++numPredict, u,uu > "/dev/stderr"
 				    WARN(numPredict<=edgePredict,"should only get "edgePredict" new edge predictions but got "numPredict);
 				}
@@ -367,7 +422,7 @@ for edgeDensity in "${EDs[@]}"; do
 			    AppendNeighbors(u);
 			}
 		    }
-		    if(qH>qT && Slen > 1) {
+		    if(Slen > 1) { # prune outliers even when the BFS ended by misses/maxClus
 			# post-process to remove nodes with too low in-cluster degree---quite relevant for lower density
 			# communities where a node may be added because it does not
 			# reduce the *mean* degree of the cluster, but it does not really have sufficiently strong
@@ -403,7 +458,8 @@ for edgeDensity in "${EDs[@]}"; do
 			ed = edgeCount/(Slen*(Slen-1)/2);
 			WARN(ed >= ED,"hmmm, ed is "ed);
 		    }
-		    if(Slen>=minClus && wgtEdgeCount/edgeCount>='$minEdgeMean') {
+		    if(coreIters>0 && Slen>=2 && Slen<maxClus && coreValid()) CoreRefine();
+		    if(Slen>=minClus && edgeCount>0 && wgtEdgeCount/edgeCount>='$minEdgeMean') {
 			++numClus; printf "%d %d %g", Slen, edgeCount, wgtEdgeCount
 			# Print nodes in deterministic order so that duplicate clusters can easily be removed later
 			PROCINFO["sorted_in"]="@ind_str_asc";
@@ -431,7 +487,7 @@ for edgeDensity in "${EDs[@]}"; do
     done
     for k in "${Ks[@]}"; do
 	wait; (( BLANT_EXIT_CODE += $? ))
-    done
+	done
 done
 
 # we can use the --merge option because the subfinal files are already sorted in SUBFINAL_SORT order
