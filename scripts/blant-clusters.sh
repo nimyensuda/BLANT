@@ -354,26 +354,6 @@ for edgeDensity in "${EDs[@]}"; do
 		}
 		logging=0;
 	    }
-	    function highRelClusCount(u, v) { # Heuristic
-		if(!(u in count) || count[u]==0) return 1;
-		if(!(v in count) || count[v]==0) return 0;
-		if (v in count) return count[v]/count[u]>=sqrt('$edgeDensity')*0.9; # 0.7 seems about optimal, but 0.5 to 0.9 also work well
-		else return 1/count[u]>=0.5;
-	    }
-	    function AppendNeighbors(u,origin,    v,oldOrder) {
-		oldOrder=PROCINFO["sorted_in"];
-		if(u in graphletNeighbors) {
-		    # The default is to append them in random order... no significant difference on small networks
-		    PROCINFO["sorted_in"]="randsort";
-		    for (v in graphletNeighbors[u]) {
-			if(!(v in visitedQ) && (!(v in line) || line[v] > line[origin]) && highRelClusCount(u, v)) {
-			    QueueAdd("Q", v);
-			    visitedQ[v]=1;
-			}
-		    }
-		    PROCINFO["sorted_in"]=oldOrder;
-		}
-	    }
 	    END{n=length(degree); # number of nodes in the input network
 		if('$edgeDensity'==1) density_leeway=1;
 		else density_leeway = '$DENSITY_LEEWAY';
