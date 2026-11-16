@@ -28,7 +28,7 @@ OPTIONS (added BEFORE the blant.exe name)
        it as a p-value and set the smallest cluster to whatever size gives the number of edges a p-value less than this;
        default behaviour is to demand a cluster whose number of edges has p-value < 1/(n choose 2)^2 (heuristic).
     -M largest: stop building a community if it reaches this size (default: no limit)
-    -X N: CORE refinement: up to N region-exploration rounds per community (default 20; 0 = off)
+    -X N: CORE refinement: up to N region-exploration rounds per community (default 0; 0 = off)
     -sSAMPLE_METHOD: BLANT's sampling method (reasonable choices are MCMC, NBE, EBE, or RES)
     -o OVERLAP: (default 0.5); the maximum allowed fractional overlap between a new cluster and any one previously discovered
 	cluster (though it can overlap by more than this with MULTIPLE previous clusters). If it overlaps more than this with
@@ -86,7 +86,7 @@ SUBFINAL_SORT="-k 2nr -k 5n"
 BLANT_FILES=''
 
 # CORE algorithm parameters
-CORE_ITERS=20  # number of region exploration rounds per community (0 disables)
+CORE_ITERS=0  # number of region exploration rounds per community (0 disables)
 CORE_STALL=5   # number of consecutive non-improving rounds before stop refining 
 
 while echo "X$1" | grep '^X-' >/dev/null; do # first argument is an option
