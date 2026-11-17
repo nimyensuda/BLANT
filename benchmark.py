@@ -14,26 +14,26 @@ from typing import Literal
 # required args
 SCRIPTS: dict[str, set[str]] = {
     "scripts/blant-clusters-v1.sh": set(),
-    "scripts/blant-clusters-v2-core.sh": {"-X"},
-    "scripts/blant-clusters-v3-jeremy-core.sh": {"-X"},
+    # "scripts/blant-clusters-v2-core.sh": {"-X"},
+    # "scripts/blant-clusters-v3-jeremy-core.sh": {"-X"},
 }
 SCRIPTS_NAMES = list(SCRIPTS.keys())
 
 NETWORKS = [
     # "networks/AThaliana.el",
-    "networks/CElegans.el",
-    # "networks/DMelanogaster.el",
+    # "networks/CElegans.el",
+    "networks/DMelanogaster.el",
     # "networks/HI-union.el",
     # "networks/HSapiens.el",
     # "networks/yeast.el",
 ]
 K_GRAPHLETS = [
     "4",
-    # "6",
+    "6",
 ]
 EDGE_DENSITIES = [
-    "0.6",
-    "0.8",
+    # "0.6",
+    # "0.8",
     "1.0",
 ]
 
@@ -41,13 +41,14 @@ EDGE_DENSITIES = [
 # boolean flag: "" (True), None (False)
 OPTIONS: dict[str, tuple[str, ...] | tuple[Literal[""], None]] = {
     "-X": (
-        "5",
-        "10",
+        "0",
+        # "5",
+        # "10",
     ),
 }
 
 RANDOM_SEED = 99
-ITERATIONS = 3  # per cmd with random seed
+ITERATIONS = 10  # per cmd with random seed
 TIMEOUT_S: int | None = None  # per run
 
 OUTPUT = Path("benchmark_results")
@@ -89,7 +90,7 @@ def check_setup() -> None:
 
 
 def cache_blant(network: str, k: str, seed: int) -> Path:
-    d = OUTPUT_CACHE / f"{Path(network).stem}_k{k}_r{seed}"
+    d = OUTPUT_CACHE / f"{Path(network).stem}" / f"r{seed}"
     out = d / f"blant{k}.out"
     if not out.exists():
         d.mkdir(parents=True, exist_ok=True)
@@ -122,18 +123,29 @@ def run_once(
     options: list[str],
     filename: str,
 ) -> dict[str, float | str]:
-    cache = cache_blant(network, k, seed)
+    str_cache = str(cache_blant(network, k, seed))
+    return {
+        "status": 0,
+        "wall": 1.0,
+        "clusters": 1,
+        "options": "",
+    }
 
-    out_f = OUTPUT_RESULTS / f"{filename}.out"
-    log_f = OUTPUT_LOGS / f"{filename}.log"
+    str_network_name = Path(network).stem
+    str_seed = str(seed)
+
+    out_f = OUTPUT_RESULTS / str_network_name / f"r{str_seed}" / f"{filename}.out"
+    log_f = OUTPUT_LOGS / str_network_name / f"r{str_seed}" / f"{filename}.log"
+    out_f.parent.mkdir(parents=True, exist_ok=True)
+    log_f.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         "bash",
         script,
         "-r",
-        str(seed),
+        str_seed,
         "-D",
-        str(cache),
+        str_cache,
         "-T",
         str(OUTPUT_TMP),
         *options,
